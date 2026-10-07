@@ -1,14 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const Groq = require('groq-sdk');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MATERIALS = ['PLASTIC', 'PAPER', 'METAL', 'ORGANIC'];
-const MODEL = process.env.GROQ_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct';
-const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // Groq limit for base64 images is 4MB
-const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
+const MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+const API_KEY = process.env.GEMINI_API_KEY;
 
 // CORS: lets the Netlify frontend call this Render backend. Set FRONTEND_URL to your Netlify URL.
 const ORIGINS = (process.env.FRONTEND_URL || '*').split(',').map(s => s.trim().replace(/\/+$/, ''));
@@ -30,31 +29,32 @@ Reply with ONLY a JSON object:
 {"material":"PLASTIC|PAPER|METAL|ORGANIC|UNKNOWN","confidence":0-100,"item":"short item name","reason":"one short sentence"}`;
 
 app.get('/api/status', (req, res) => res.json({
-  ai: Boolean(groq),
+  ai: Boolean(API_KEY),
   esp32: process.env.ESP32_URL ? 'configured' : 'simulation',
 }));
 
 app.post('/api/classify', async (req, res) => {
   const image = req.body && req.body.image;
-  if (typeof image !== 'string' || !/^data:image\/(jpeg|jpg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(image))
-    return res.status(400).json({ error: 'Invalid image. Send a base64 JPEG data URL.' });
-  if (Buffer.byteLength(image, 'utf8') > MAX_IMAGE_BYTES)
-    return res.status(413).json({ error: 'Image too large (max 4 MB).' });
-  if (!groq) return res.status(500).json({ error: 'GROQ_API_KEY is not configured on the server.' });
+  const m = typeof image === 'string' && image.match(/^data:(image\/(?:jpeg|jpg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+  if (!m) return res.status(400).json({ error: 'Invalid image. Send a base64 JPEG data URL.' });
+  if (Buffer.byteLength(image, 'utf8') > MAX_IMAGE_BYTES) return res.status(413).json({ error: 'Image too large (max 4 MB).' });
+  if (!API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server.' });
 
-  const models = [...new Set([MODEL, 'meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'qwen/qwen3.6-27b'])];
+  const models = [...new Set([MODEL, 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.6-flash'])];
   let lastErr;
   for (const model of models) {
     try {
-      const completion = await groq.chat.completions.create({
-        model, temperature: 0.1, max_tokens: 300,
-        response_format: { type: 'json_object' },
-        messages: [{ role: 'user', content: [
-          { type: 'text', text: PROMPT },
-          { type: 'image_url', image_url: { url: image } },
-        ] }],
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: PROMPT }, { inline_data: { mime_type: m[1], data: m[2] } }] }],
+          generationConfig: { temperature: 0.1, maxOutputTokens: 2048, responseMimeType: 'application/json' },
+        }),
       });
-      const raw = completion.choices?.[0]?.message?.content || '{}';
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) { const e = new Error(data.error?.message || `HTTP ${r.status}`); e.status = r.status; throw e; }
+      const raw = (data.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('');
       let parsed;
       try { parsed = JSON.parse(raw); } catch { parsed = JSON.parse((raw.match(/\{[\s\S]*\}/) || ['{}'])[0]); }
       let material = String(parsed.material || '').toUpperCase().trim();
@@ -68,14 +68,13 @@ app.post('/api/classify', async (req, res) => {
       });
     } catch (err) {
       lastErr = err;
-      console.error(`Groq error [${model}] status=${err.status}:`, err.message);
-      const modelProblem = err.status === 404 || /decommission|not found|does not exist|no longer supported|model/i.test(err.message || '');
-      if (!modelProblem || err.status === 401 || err.status === 429) break; // try next model only for model problems
+      console.error(`Gemini error [${model}] status=${err.status}:`, err.message);
+      if (err.status !== 404) break; // only try the next model when the model name is not found
     }
   }
   const st = lastErr?.status;
-  const msg = st === 401 ? 'Invalid GROQ_API_KEY. Check the key in Render environment variables.'
-    : st === 429 ? 'AI rate limit reached. Try again shortly.'
+  const msg = st === 400 && /api key/i.test(lastErr.message) || st === 403 ? 'Invalid GEMINI_API_KEY. Check the key in Render environment variables.'
+    : st === 429 ? 'Gemini rate limit reached. Wait a minute and try again.'
     : 'AI service error: ' + String(lastErr?.message || 'unknown').slice(0, 200);
   res.status(st === 429 ? 429 : 502).json({ error: msg });
 });
