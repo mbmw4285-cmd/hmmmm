@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VERDIX – AI-Powered Waste Segregation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="glow"></div>
+<header class="top">
+  <div class="brand"><span class="logo">V</span><div><h1>VERDIX</h1><p>AI-POWERED WASTE SEGREGATION</p></div></div>
+  <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">Checking system…</span></div>
+</header>
+
+<main>
+  <section class="hero">
+    <h2>Scan. Identify. Sort.</h2>
+    <p>Use AI vision to identify waste and route it to the correct recycling category.</p>
+    <ol class="flow">
+      <li>CAMERA</li><li>GROQ AI</li><li>ESP32</li><li>BIN</li>
+    </ol>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h3>Live Camera</h3>
+      <div class="viewport">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="reticle"></div>
+        <div id="scanLine" class="scanline"></div>
+        <div id="camEmpty" class="empty">Camera is off</div>
+      </div>
+      <select id="cameraSelect" aria-label="Camera"><option>No cameras detected</option></select>
+      <div class="row">
+        <button id="startBtn" class="btn ghost">Start Camera</button>
+        <button id="scanBtn" class="btn" disabled>Scan Object</button>
+      </div>
+      <p class="hint">Place one waste item in the center of the frame.</p>
+      <canvas id="canvas" hidden></canvas>
+    </section>
+
+    <section class="card result" id="resultCard" data-material="none">
+      <h3>AI Classification</h3>
+      <div class="material" id="material">—</div>
+      <div class="meta"><span>Detected item</span><strong id="item">Waiting for scan</strong></div>
+      <div class="meta"><span>Confidence</span><strong id="confText">0%</strong></div>
+      <div class="bar"><i id="confBar"></i></div>
+      <p class="reason" id="reason">Scan an object to see the AI's analysis.</p>
+      <button id="sortBtn" class="btn wide" disabled>Sort to Bin</button>
+      <p class="msg" id="msg" role="status"></p>
+    </section>
+  </div>
+
+  <section class="bins">
+    <article class="bin" data-bin="PLASTIC"><b>01</b><h4>PLASTIC</h4><p>Packaging • Bottles</p></article>
+    <article class="bin" data-bin="PAPER"><b>02</b><h4>PAPER</h4><p>Cardboard • Sheets</p></article>
+    <article class="bin" data-bin="METAL"><b>03</b><h4>METAL</h4><p>Cans • Foil</p></article>
+    <article class="bin" data-bin="ORGANIC"><b>04</b><h4>ORGANIC</h4><p>Food • Biodegradable</p></article>
+  </section>
+
+  <section class="hw">
+    <h3>Hardware</h3>
+    <p>ESP32 DevKit (WROOM-32) · 3× MG90S servos · 4× HC-SR04 · IR object sensor · 5 kg load cell + HX711 · regulated 5 V supply · four bins · MDF frame with gravity-fed chutes. No conveyor belt.</p>
+  </section>
+</main>
+<footer>VERDIX · College mini-project · Webcam → Groq Vision → ESP32 servo sorting</footer>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
