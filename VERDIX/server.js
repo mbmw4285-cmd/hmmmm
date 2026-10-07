@@ -10,7 +10,6 @@ const MODEL = process.env.GROQ_MODEL || 'meta-llama/llama-4-scout-17b-16e-instru
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // Groq limit for base64 images is 4MB
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
-
 // CORS: lets the Netlify frontend call this Render backend. Set FRONTEND_URL to your Netlify URL.
 const ORIGINS = (process.env.FRONTEND_URL || '*').split(',').map(s => s.trim().replace(/\/+$/, ''));
 app.use((req, res, next) => {
@@ -43,34 +42,42 @@ app.post('/api/classify', async (req, res) => {
     return res.status(413).json({ error: 'Image too large (max 4 MB).' });
   if (!groq) return res.status(500).json({ error: 'GROQ_API_KEY is not configured on the server.' });
 
-  try {
-    const completion = await groq.chat.completions.create({
-      model: MODEL,
-      temperature: 0.1,
-      max_tokens: 300,
-      response_format: { type: 'json_object' },
-      messages: [{ role: 'user', content: [
-        { type: 'text', text: PROMPT },
-        { type: 'image_url', image_url: { url: image } },
-      ] }],
-    });
-    const raw = completion.choices?.[0]?.message?.content || '{}';
-    let parsed;
-    try { parsed = JSON.parse(raw); } catch { parsed = JSON.parse((raw.match(/\{[\s\S]*\}/) || ['{}'])[0]); }
-    let material = String(parsed.material || '').toUpperCase().trim();
-    if (!MATERIALS.includes(material)) material = 'UNKNOWN';
-    const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 0)));
-    res.json({
-      material,
-      confidence: material === 'UNKNOWN' ? Math.min(confidence, 40) : confidence,
-      item: String(parsed.item || 'Unidentified object').slice(0, 80),
-      reason: String(parsed.reason || 'No explanation provided.').slice(0, 300),
-    });
-  } catch (err) {
-    console.error('Groq error:', err.message);
-    const status = err.status === 429 ? 429 : 502;
-    res.status(status).json({ error: status === 429 ? 'AI rate limit reached. Try again shortly.' : 'AI service error. Check your API key and model.' });
+  const models = [...new Set([MODEL, 'meta-llama/llama-4-scout-17b-16e-instruct', 'meta-llama/llama-4-maverick-17b-128e-instruct', 'qwen/qwen3.6-27b'])];
+  let lastErr;
+  for (const model of models) {
+    try {
+      const completion = await groq.chat.completions.create({
+        model, temperature: 0.1, max_tokens: 300,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: [
+          { type: 'text', text: PROMPT },
+          { type: 'image_url', image_url: { url: image } },
+        ] }],
+      });
+      const raw = completion.choices?.[0]?.message?.content || '{}';
+      let parsed;
+      try { parsed = JSON.parse(raw); } catch { parsed = JSON.parse((raw.match(/\{[\s\S]*\}/) || ['{}'])[0]); }
+      let material = String(parsed.material || '').toUpperCase().trim();
+      if (!MATERIALS.includes(material)) material = 'UNKNOWN';
+      const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 0)));
+      return res.json({
+        material,
+        confidence: material === 'UNKNOWN' ? Math.min(confidence, 40) : confidence,
+        item: String(parsed.item || 'Unidentified object').slice(0, 80),
+        reason: String(parsed.reason || 'No explanation provided.').slice(0, 300),
+      });
+    } catch (err) {
+      lastErr = err;
+      console.error(`Groq error [${model}] status=${err.status}:`, err.message);
+      const modelProblem = err.status === 404 || /decommission|not found|does not exist|no longer supported|model/i.test(err.message || '');
+      if (!modelProblem || err.status === 401 || err.status === 429) break; // try next model only for model problems
+    }
   }
+  const st = lastErr?.status;
+  const msg = st === 401 ? 'Invalid GROQ_API_KEY. Check the key in Render environment variables.'
+    : st === 429 ? 'AI rate limit reached. Try again shortly.'
+    : 'AI service error: ' + String(lastErr?.message || 'unknown').slice(0, 200);
+  res.status(st === 429 ? 429 : 502).json({ error: msg });
 });
 
 app.post('/api/sort', async (req, res) => {
