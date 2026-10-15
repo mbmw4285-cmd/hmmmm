@@ -16,7 +16,7 @@ app.use((req, res, next) => {
   if (ORIGINS.includes('*')) res.setHeader('Access-Control-Allow-Origin', '*');
   else if (o && ORIGINS.includes(o)) { res.setHeader('Access-Control-Allow-Origin', o); res.setHeader('Vary', 'Origin'); }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Device-Token');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
@@ -27,6 +27,42 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PROMPT = `You are the vision system of a waste-sorting machine. Look at the single waste item in the image and classify its main material into exactly one of: PLASTIC, PAPER, METAL, ORGANIC. If the image is blurry, empty, shows no waste item, or the material cannot be determined, use UNKNOWN.
 Reply with ONLY a JSON object:
 {"material":"PLASTIC|PAPER|METAL|ORGANIC|UNKNOWN","confidence":0-100,"item":"short item name","reason":"one short sentence"}`;
+
+
+const BIN_FULL_CM = Number(process.env.BIN_FULL_CM || 8);
+const DEVICE_TOKEN = process.env.DEVICE_TOKEN || '';
+const binStatus = Object.fromEntries(MATERIALS.map(m => [m, { state: 'NO_DATA', distance_cm: null, updated_at: 0 }]));
+let triggerId = 0;
+let lastTriggerAt = 0;
+function authorizedDevice(req) { return !DEVICE_TOKEN || req.headers['x-device-token'] === DEVICE_TOKEN; }
+function currentBin(material) {
+  const b = binStatus[material];
+  if (!b || !b.updated_at || Date.now() - b.updated_at > 60000) return { state: 'NO_DATA', distance_cm: b ? b.distance_cm : null };
+  return { state: b.state, distance_cm: b.distance_cm };
+}
+app.post('/api/trigger', (req, res) => {
+  if (!authorizedDevice(req)) return res.status(401).json({ error: 'Device not authorized.' });
+  if (Date.now() - lastTriggerAt < 1200) return res.json({ ok: true, ignored: true, id: triggerId });
+  lastTriggerAt = Date.now(); triggerId++;
+  res.json({ ok: true, id: triggerId });
+});
+app.get('/api/trigger', (req, res) => {
+  const after = Number(req.query.after || 0);
+  res.json({ triggered: triggerId > after, id: triggerId });
+});
+app.post('/api/bin-status', (req, res) => {
+  if (!authorizedDevice(req)) return res.status(401).json({ error: 'Device not authorized.' });
+  const material = String(req.body && req.body.material || '').toUpperCase();
+  const distance = Number(req.body && req.body.distance_cm);
+  if (!MATERIALS.includes(material) || !Number.isFinite(distance) || distance < 0 || distance > 500) return res.status(400).json({ error: 'Send material and valid distance_cm.' });
+  binStatus[material] = { distance_cm: distance, state: distance <= BIN_FULL_CM ? 'FULL' : 'OK', updated_at: Date.now() };
+  res.json({ ok: true, material, ...currentBin(material), threshold_cm: BIN_FULL_CM });
+});
+app.get('/api/bin-status', (req, res) => {
+  const bins = {};
+  MATERIALS.forEach(m => { bins[m] = currentBin(m); });
+  res.json({ sensor_count: 1, full_threshold_cm: BIN_FULL_CM, bins });
+});
 
 app.get('/api/status', (req, res) => res.json({
   ai: Boolean(API_KEY),
@@ -83,8 +119,13 @@ app.post('/api/sort', async (req, res) => {
   const material = String(req.body?.material || '').toUpperCase();
   if (!MATERIALS.includes(material)) return res.status(400).json({ error: 'Invalid material category.' });
   const label = material[0] + material.slice(1).toLowerCase();
-  const base = (process.env.ESP32_URL || '').trim().replace(/\/+$/, '');
+  const base = (process.env.ESP32_URL || '').trim().replace(/\\/+$/, '');
   if (!base) return res.json({ ok: true, simulated: true, material, message: `${label} selected – ESP32 simulation mode.` });
+  const bin = currentBin(material);
+  if (bin.state !== 'OK') {
+    const why = bin.state === 'FULL' ? `${label} bin is full. Sorting was stopped.` : `No recent fullness reading for the ${label} bin. Sorting was stopped for safety.`;
+    return res.status(409).json({ ok: false, error: why, bin_state: bin.state });
+  }
 
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
