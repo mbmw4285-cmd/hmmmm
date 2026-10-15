@@ -119,7 +119,8 @@ app.post('/api/sort', async (req, res) => {
   const material = String(req.body?.material || '').toUpperCase();
   if (!MATERIALS.includes(material)) return res.status(400).json({ error: 'Invalid material category.' });
   const label = material[0] + material.slice(1).toLowerCase();
-  const base = (process.env.ESP32_URL || '').trim().replace(/\\/+$/, '');
+  let base = (process.env.ESP32_URL || '').trim();
+  while (base.endsWith('/')) base = base.slice(0, -1);
   if (!base) return res.json({ ok: true, simulated: true, material, message: `${label} selected – ESP32 simulation mode.` });
   const bin = currentBin(material);
   if (bin.state !== 'OK') {
