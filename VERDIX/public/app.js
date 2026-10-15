@@ -2,7 +2,7 @@ const API = (window.VERDIX_API_URL || '').replace(/\/+$/, '');
 const $ = id => document.getElementById(id);
 const video = $('video'), canvas = $('canvas'), select = $('cameraSelect');
 const startBtn = $('startBtn'), scanBtn = $('scanBtn'), sortBtn = $('sortBtn'), msg = $('msg');
-let stream = null, current = null;
+let stream = null, current = null, lastTriggerId = 0, handlingTrigger = false;
 
 function say(text, type = '') { msg.textContent = text; msg.className = 'msg ' + type; }
 const cap = m => m[0] + m.slice(1).toLowerCase();
@@ -61,27 +61,31 @@ function showResult(r) {
   sortBtn.textContent = r.material === 'UNKNOWN' ? 'Sort to Bin' : `Sort to ${cap(r.material)} Bin`;
 }
 
-async function scan() {
+async function scan(automatic = false) {
   if (!stream || !video.videoWidth) return say('Start the camera first.', 'err');
   const scale = Math.min(1, 1024 / video.videoWidth);
   canvas.width = video.videoWidth * scale; canvas.height = video.videoHeight * scale;
   canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
   const image = canvas.toDataURL('image/jpeg', 0.85);
   scanBtn.disabled = sortBtn.disabled = true; scanBtn.textContent = 'Analyzing…';
-  $('scanLine').classList.add('on'); say('Sending image to Groq AI…');
+  $('scanLine').classList.add('on'); say(automatic ? 'IR detected an item. Gemini AI is analyzing…' : 'Sending image to Gemini AI…');
   try {
     const res = await fetch(API + '/api/classify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Classification failed');
     showResult(data); say('');
+    if (automatic) {
+      if (data.material === 'UNKNOWN') say('Item could not be identified clearly. Nothing was sorted.', 'err');
+      else await sort(true);
+    }
   } catch (e) { say(e.message, 'err'); }
   finally { scanBtn.disabled = false; scanBtn.textContent = 'Scan Object'; $('scanLine').classList.remove('on'); }
 }
 
-async function sort() {
+async function sort(automatic = false) {
   if (!current || current.material === 'UNKNOWN') return;
   const m = current.material;
-  sortBtn.disabled = true; say(`Routing to ${m} bin...`);
+  sortBtn.disabled = true; say(automatic ? `Automatically routing to ${m} bin...` : `Routing to ${m} bin...`);
   try {
     const res = await fetch(API + '/api/sort', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ material: m }) });
     const data = await res.json();
@@ -94,4 +98,28 @@ startBtn.onclick = () => startCamera(select.value && select.value.length > 12 ? 
 select.onchange = () => stream && startCamera(select.value);
 scanBtn.onclick = scan; sortBtn.onclick = sort;
 loadStatus(); setInterval(loadStatus, 30000);
+setInterval(pollIRTrigger, 600);
+// The page must remain open and camera permission must be granted for automatic IR-triggered sorting.
+startCamera().catch(() => {});
 navigator.mediaDevices?.enumerateDevices && listCameras().catch(() => {});
+
+async function pollIRTrigger() {
+  if (handlingTrigger) return;
+  try {
+    const response = await fetch(API + '/api/trigger?after=' + lastTriggerId, { cache: 'no-store' });
+    if (!response.ok) return;
+    const event = await response.json();
+    if (!event.triggered || event.id <= lastTriggerId) return;
+    lastTriggerId = event.id;
+    if (!stream || !video.videoWidth) {
+      say('IR detected an item. Keep this page open and allow camera access to sort automatically.', 'err');
+      return;
+    }
+    handlingTrigger = true;
+    await scan(true);
+  } catch (e) {
+    // A brief network interruption should not stop the camera or page.
+  } finally {
+    handlingTrigger = false;
+  }
+}
