@@ -18,10 +18,10 @@
 
 <main>
   <section class="hero">
-    <h2>Scan. Identify. Sort.</h2>
-    <p>Use AI vision to identify waste and route it to the correct recycling category.</p>
+    <h2>Detect. Identify. Sort.</h2>
+    <p>IR-triggered detection starts Gemini AI classification and routes identified waste to one of four bins.</p>
     <ol class="flow">
-      <li>CAMERA</li><li>GROQ AI</li><li>ESP32</li><li>BIN</li>
+      <li>IR SENSOR</li><li>GEMINI AI</li><li>ESP32</li><li>BIN</li>
     </ol>
   </section>
 
@@ -39,7 +39,7 @@
         <button id="startBtn" class="btn ghost">Start Camera</button>
         <button id="scanBtn" class="btn" disabled>Scan Object</button>
       </div>
-      <p class="hint">Place one waste item in the center of the frame.</p>
+      <p class="hint">Keep this webpage open and allow camera access. The IR sensor triggers automatic classification; manual scan is also available.</p>
       <canvas id="canvas" hidden></canvas>
     </section>
 
@@ -64,10 +64,10 @@
 
   <section class="hw">
     <h3>Hardware</h3>
-    <p>ESP32 DevKit (WROOM-32) · 3× MG90S servos · 4× HC-SR04 · IR object sensor · 5 kg load cell + HX711 · regulated 5 V supply · four bins · MDF frame with gravity-fed chutes. No conveyor belt.</p>
+    <p>ESP32 DevKit (WROOM-32) · 3× MG90S servos · 1× HC-SR04 (mounted near the upper corner, pointing down) · IR object sensor · 5 kg load cell + HX711 · regulated 5 V supply · four bins · MDF frame with gravity-fed chutes. No conveyor belt.</p>
   </section>
 </main>
-<footer>VERDIX · College mini-project · Webcam → Groq Vision → ESP32 servo sorting</footer>
+<footer>VERDIX · College mini-project · IR sensor → Gemini Vision → ESP32 servo sorting</footer>
 <script src="config.js"></script>
 <script src="app.js"></script>
 </body>
